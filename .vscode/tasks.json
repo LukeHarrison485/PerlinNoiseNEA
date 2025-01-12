@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build GLFW + GLAD",
+            "type": "shell",
+            "command": "g++",
+            "args": [
+                "-std=c++17",                        // C++ standard
+                "-I${workspaceFolder}/include",       // Add include directory (for glfw3.h, glad.h)
+                "-L${workspaceFolder}/lib",           // Add lib directory (for glfw3.lib, opengl32.lib)
+                "-o", "${workspaceFolder}/bin/my_project.exe",  // Output executable
+                "${workspaceFolder}/src/main.cpp",    // Main source file
+                "${workspaceFolder}/src/glad.c",     // GLAD source file
+                "-lglfw3",                           // Link GLFW library
+                "-lopengl32",                        // Link OpenGL library (Windows)
+                "-lgdi32",                           // Link GDI32 library (Windows)
+                "-static-libgcc",                    // Static link for GCC (optional, depending on setup)
+                "-static-libstdc++"                  // Static link for C++ std library (optional)
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"],
+            "detail": "Build GLFW + GLAD project"
+        }
+    ]
+}
