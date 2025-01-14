@@ -16,7 +16,7 @@ enum Camera_Movement {
 // Default camera values
 const float YAW         = -90.0f;
 const float PITCH       =  0.0f;
-const float SPEED       =  2.5f;
+const float SPEED       =  3.5f;
 const float SENSITIVITY =  0.1f;
 const float ZOOM        =  75.0f;
 
@@ -40,7 +40,7 @@ public:
 
     bool running = 0;
 
-    Camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = YAW, float pitch = PITCH) : Front(glm::vec3(0.0f, 0.0f, -1.0f)), MovementSpeed(SPEED), MouseSensitivity(SENSITIVITY), Zoom(ZOOM), minFov(1.0f), maxFov(90.0f) {
+    Camera(glm::vec3 position = glm::vec3(0.0f, 10.5f, 0.0f), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = YAW, float pitch = PITCH) : Front(glm::vec3(0.0f, 0.0f, -1.0f)), MovementSpeed(SPEED), MouseSensitivity(SENSITIVITY), Zoom(ZOOM), minFov(1.0f), maxFov(90.0f) {
         Position = position;
         WorldUp = up;
         Yaw = yaw;
@@ -62,11 +62,15 @@ public:
 
     void ProcessKeyboard(Camera_Movement direction, float deltaTime) {
         float velocity = MovementSpeed * deltaTime;
+
+        // Create a modified Front vector with the y component set to 0
+        glm::vec3 flatFront = glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
+
         if(direction == FORWARD) {
-            Position += Front * velocity;
+            Position += flatFront * velocity;
         }
         if(direction == BACKWARD) {
-            Position -= Front * velocity;
+            Position -= flatFront * velocity;
         }
         if(direction == LEFT) {
             Position -= Right * velocity;
@@ -74,7 +78,11 @@ public:
         if(direction == RIGHT) {
             Position += Right * velocity;
         }
+
+        // Optional: Keep Position.y at a fixed value if needed
+        Position.y = 2.5f;
     }
+
 
     void ProcessMouseMovement(float xoffset, float yoffset, GLboolean contrainPitch = true) {
         xoffset *= MouseSensitivity;
