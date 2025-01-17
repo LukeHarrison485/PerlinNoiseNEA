@@ -1,0 +1,24 @@
+void generateWorldFromHeightmap(const char* heightmapPath, std::vector<cube*>& cubes, int MAX_HEIGHT) {
+    FILE* perlin = createPerlinNoise(32, 32, 32, seed);
+    int width, height, nrChannels;
+    unsigned char* heightmapData = stbi_load_from_file(perlin, &width, &height, &nrChannels, 1);
+    if (!heightmapData) {
+        std::cout << "Failed to load heightmap" << std::endl;
+        return;
+    }
+
+    for (int z = 0; z < height; ++z) {
+        for (int x = 0; x < width; ++x) {
+            unsigned char pixelValue = heightmapData[z * width + x];
+            float normalizedHeight = pixelValue / 255.0f; // Normalize [0, 1]
+            int cubeHeight = static_cast<int>(normalizedHeight * MAX_HEIGHT);
+
+            // Create cubes stacked vertically
+            for (int y = 0; y < cubeHeight; ++y) {
+                cubes.push_back(new cube(glm::vec3(x, y, z), DIRT, cubes));
+            }
+        }
+    }
+
+    stbi_image_free(heightmapData);
+}

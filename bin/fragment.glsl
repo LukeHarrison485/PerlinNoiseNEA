@@ -80,6 +80,11 @@ void main()
     for(int i = 0; i < pointLightCount; i++)
         result += CalcPointLight(pointLights[i], norm, FragPos, viewDir);    
     // phase 3: spot light
+    if (gamma)
+    {
+        float gammaValue = 2.2; // Typical gamma value
+        result = pow(result, vec3(1.0 / gammaValue));
+    }
     FragColor = vec4(result, 1.0);
 }
 

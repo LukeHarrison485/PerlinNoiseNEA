@@ -64,13 +64,13 @@ public:
         float velocity = MovementSpeed * deltaTime;
 
         // Create a modified Front vector with the y component set to 0
-        glm::vec3 flatFront = glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
+        //glm::vec3 flatFront = glm::normalize(glm::vec3(Front.x, 0.0f, Front.z));
 
         if(direction == FORWARD) {
-            Position += flatFront * velocity;
+            Position += Front * velocity;
         }
         if(direction == BACKWARD) {
-            Position -= flatFront * velocity;
+            Position -= Front * velocity;
         }
         if(direction == LEFT) {
             Position -= Right * velocity;
@@ -80,7 +80,7 @@ public:
         }
 
         // Optional: Keep Position.y at a fixed value if needed
-        Position.y = 2.5f;
+        //Position.y = 2.5f;
     }
 
 

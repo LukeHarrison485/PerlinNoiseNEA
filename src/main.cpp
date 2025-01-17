@@ -1,6 +1,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -9,6 +10,9 @@
 #include <iostream>
 #include "shader.h"
 #include "camera.h"
+#include "cube.h"
+#include "perlin.h"
+#include "timeCycle.h"
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -16,9 +20,42 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void processInput(GLFWwindow *window);
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
-unsigned int loadTexture(const char *path);
+unsigned int loadTexture(char const * path);
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 void createPointLight(int index, Shader& lightingShader);
+void renderScene(GLFWwindow* window);
+
+Shader lightingShader;
+Shader lightCubeShader;
+
+unsigned int VBO, cubeVAO;
+
+int seed = time(NULL);
+
+void generateWorldFromHeightmap(const char* heightmapPath, std::vector<cube*>& cubes, int MAX_HEIGHT, unsigned int* vao) {
+    createPerlinNoise(16, 64, 64, seed);
+    int width, height, nrChannels;
+    unsigned char* heightmapData = stbi_load(heightmapPath, &width, &height, &nrChannels, 1); // Load as grayscale
+    if (!heightmapData) {
+        std::cout << "Failed to load heightmap" << std::endl;
+        return;
+    }
+
+    for (int z = 0; z < height; ++z) {
+        for (int x = 0; x < width; ++x) {
+            unsigned char pixelValue = heightmapData[z * width + x];
+            float normalizedHeight = pixelValue / 255.0f; // Normalize [0, 1]
+            int cubeHeight = static_cast<int>(normalizedHeight * MAX_HEIGHT);
+
+            // Create cubes stacked vertically
+            for (int y = 0; y < cubeHeight; ++y) {
+                cubes.push_back(new cube(glm::vec3(x, y, z), DIRT, cubes, vao, &lightingShader));
+            }
+        }
+    }
+
+    stbi_image_free(heightmapData);
+}
 
 // settings
 const unsigned int SCR_WIDTH = 800;
@@ -34,47 +71,27 @@ float deltaTime = 0.0f;	// time between current frame and last frame
 float lastFrame = 0.0f;
 
 bool bilin = true;
-bool gamma = true;
+bool gamma = false;
 
 glm::vec3 lightPos(1.2f, 1.0f, 2.0f);
 
-glm::vec3 cubePositions[1024] = {
-        glm::vec3( 0.0f,  0.0f,  0.0f),
-        glm::vec3( 2.0f,  5.0f, -15.0f),
-        glm::vec3(-1.5f, -2.2f, -2.5f),
-        glm::vec3(-3.8f, -2.0f, -12.3f),
-        glm::vec3( 2.4f, -0.4f, -3.5f),
-        glm::vec3(-1.7f,  3.0f, -7.5f),
-        glm::vec3( 1.3f, -2.0f, -2.5f),
-        glm::vec3( 1.5f,  2.0f, -2.5f),
-        glm::vec3( 1.5f,  0.2f, -1.5f),
-        glm::vec3(-1.3f,  1.0f, -1.5f),
-        glm::vec3(6.0f, 1.0f, -1.5f)
-    };
 
-    glm::vec3 pointLightPositions[100] = {
-        glm::vec3( 0.7f,  0.2f,  2.0f),
-        glm::vec3( 2.3f, -3.3f, -4.0f),
-        glm::vec3(-4.0f,  2.0f, -12.0f),
-        glm::vec3( 0.0f,  0.0f, -3.0f),
-        glm::vec3( 1.0f,  2.0f, -3.0f)
-    };
-    int pointLightCount = 5;
+glm::vec3 pointLightPositions[100];
+int pointLightCount = 0;
 
 int width = 20;
 int height = 2;
 int depth = 20;
-
 
 int main()
 {
     // glfw: initialize and configure
     // ------------------------------
     glfwInit();
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GL_SAMPLES, 16);
+    glfwWindowHint(GLFW_SAMPLES, 0);
 
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
@@ -104,66 +121,41 @@ int main()
         std::cout << "Failed to initialize GLAD" << std::endl;
         return -1;
     }
+    lightingShader.createShader("vertex.glsl", "fragment.glsl");
+    lightCubeShader.createShader("shaders/lighting.vs", "shaders/lighting.fs");
+    
+    const char* version = (const char*)glGetString(GL_VERSION);
+    std::cout << "OpenGL Version: " << version << std::endl;
+
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_MULTISAMPLE);  
 
-    Shader lightingShader("vertex.glsl", "fragment.glsl");
-    Shader lightCubeShader("shaders/lighting.vs", "shaders/lighting.fs");
-
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     
-    float vertices[] = {
-        // positions          // normals           // texture coords
-        -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  0.0f,
-         0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  0.0f,
-         0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  1.0f,
-         0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f,  1.0f,
-        -0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  1.0f,
-        -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f,  0.0f,
 
-        -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f,
-         0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  0.0f,
-         0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  1.0f,
-         0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f,  1.0f,
-        -0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  1.0f,
-        -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f,
-
-        -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-        -0.5f,  0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  1.0f,
-        -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-        -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-        -0.5f, -0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  0.0f,  0.0f,
-        -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-
-         0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-         0.5f,  0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  1.0f,
-         0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-         0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-         0.5f, -0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  0.0f,  0.0f,
-         0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-
-        -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  1.0f,
-         0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  1.0f,
-         0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,
-         0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,
-        -0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  0.0f,
-        -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f,  1.0f,
-
-        -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f,
-         0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  1.0f,
-         0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,
-         0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,
-        -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  0.0f,
-        -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f
-    };
-
+    unsigned int depthMapFBO;
+    glGenFramebuffers(1, &depthMapFBO);
+    unsigned int depthCubemap;
+    glGenTextures(1, &depthCubemap);
+    const unsigned int SHADOW_WIDTH = 1024, SHADOW_HEIGHT = 1024;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
+    for (unsigned int i = 0; i < 6; ++i)
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
 
     
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);  
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthCubemap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);  
 
-    // first, configure the cube's VAO (and VBO)
-    unsigned int VBO, cubeVAO;
     glGenVertexArrays(1, &cubeVAO);
     glGenBuffers(1, &VBO);
 
@@ -192,120 +184,33 @@ int main()
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    unsigned int diffuseMap = loadTexture("container2.png");
-    unsigned int specularMap = loadTexture("container2_specular.png");
+    unsigned int floorTexture = loadTexture("wood.png");
+    unsigned int floorTextureGammaCorrected = loadTexture("wood.png");
 
     lightingShader.use(); 
-    lightingShader.setInt("material.specular", 1);
     lightingShader.setInt("material.diffuse", 0);
     lightingShader.setFloat("light.constant",  1.0f);
     lightingShader.setFloat("light.linear",    0.09f);
     lightingShader.setFloat("light.quadratic", 0.032f);	
+
+    textures[DIRT] = loadTexture("dirt.png");
+    generateWorldFromHeightmap("perlin.bmp", cubes, 8, &cubeVAO);
+    printf("Amount of blocks in the world: %d\n", cubes.size());
     
 
 
     // uncomment this call to draw in wireframe polygons.
     //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    
     glEnable(GL_MULTISAMPLE);
+    
 
 
     // render loop
     // -----------
     while (!glfwWindowShouldClose(window))
     {
-        // per-frame time logic
-        // --------------------
-        float currentFrame = static_cast<float>(glfwGetTime());
-        deltaTime = currentFrame - lastFrame;
-        lastFrame = currentFrame;
-
-        // input
-        // -----
-        processInput(window);
-
-        // render
-        // ------
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        // be sure to activate shader when setting uniforms/drawing objects
-        lightingShader.use();
-        lightingShader.setVec3("viewPos", camera.Position);
-        lightingShader.setFloat("material.shininess", 64.0f);
-
-        /*
-           Here we set all the uniforms for the 5/6 types of lights we have. We have to set them manually and index 
-           the proper PointLight struct in the array to set each uniform variable. This can be done more code-friendly
-           by defining light types as classes and set their values in there, or by using a more efficient uniform approach
-           by using 'Uniform buffer objects', but that is something we'll discuss in the 'Advanced GLSL' tutorial.
-        */
-        /*/ directional light
-        lightingShader.setVec3("dirLight.direction", -0.2f, -1.0f, -0.3f);
-        lightingShader.setVec3("dirLight.ambient", 0.0f, 0.0f, 0.0f);
-        lightingShader.setVec3("dirLight.diffuse", 0.4f, 0.4f, 0.4f);
-        lightingShader.setVec3("dirLight.specular", 0.5f, 0.5f, 0.5f);
-        */
-        for(int i = 0; i < pointLightCount; i++) {
-            createPointLight(i, lightingShader);
-        }
-
-
-        // view/projection transformations
-        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
-        glm::mat4 view = camera.GetViewMatrix();
-        lightingShader.setMat4("projection", projection);
-        lightingShader.setMat4("view", view);
-
-        // world transformation
-        glm::mat4 model = glm::mat4(1.0f);
-        lightingShader.setMat4("model", model);
-        lightingShader.setInt("pointLightCount", pointLightCount);
-
-        // bind diffuse map
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, diffuseMap);
-        // bind specular map
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, specularMap);
-
-
-        // render containers
-        glBindVertexArray(cubeVAO);
-        for (int x = 0; x < width; x++)
-        {
-            for (int y = 0; y < height; y++) {
-                for (int z = 0; z < depth; z++) {
-                    glm::mat4 model = glm::mat4(1.0f);
-                    model = glm::translate(model, glm::vec3(x, y, z));
-                    lightingShader.setMat4("model", model);
-                    glDrawArrays(GL_TRIANGLES, 0, 36);
-                    cubePositions[(z * height * width) + (y * width) + x] = glm::vec3(x, y, z);
-                    }
-                
-            }
-        }
-
-         // also draw the lamp object(s)
-         lightCubeShader.use();
-         lightCubeShader.setMat4("projection", projection);
-         lightCubeShader.setMat4("view", view);
-    
-         // we now draw as many light bulbs as we have point lights.
-         glBindVertexArray(lightCubeVAO);
-         for (unsigned int i = 0; i < pointLightCount; i++)
-         {
-             model = glm::mat4(1.0f);
-             model = glm::translate(model, pointLightPositions[i]);
-             model = glm::scale(model, glm::vec3(0.2f)); // Make it a smaller cube
-             lightCubeShader.setMat4("model", model);
-             glDrawArrays(GL_TRIANGLES, 0, 36);
-         }
-
-
-        // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
-        // -------------------------------------------------------------------------------
-        glfwSwapBuffers(window);
-        glfwPollEvents();
+        renderScene(window);
     }
 
     // optional: de-allocate all resources once they've outlived their purpose:
@@ -409,7 +314,7 @@ unsigned int loadTexture(char const * path)
 {
     unsigned int textureID;
     glGenTextures(1, &textureID);
-    
+
     int width, height, nrComponents;
     unsigned char *data = stbi_load(path, &width, &height, &nrComponents, 0);
     if (data)
@@ -426,10 +331,13 @@ unsigned int loadTexture(char const * path)
         glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
 
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        // Set texture wrapping parameters
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, format == GL_RGBA ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, format == GL_RGBA ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+
+        // Set texture filtering parameters to avoid blurriness
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST); // Nearest for mipmaps
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST); // Nearest for magnification
 
         stbi_image_free(data);
     }
@@ -441,6 +349,7 @@ unsigned int loadTexture(char const * path)
 
     return textureID;
 }
+
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
@@ -463,15 +372,79 @@ void createPointLight(int index, Shader& lightingShader) {
     // Use the index to correctly reference the specific point light in the shader
     std::string baseName = "pointLights[" + std::to_string(index) + "]";
     
-    lightingShader.setVec3(baseName + ".position", pointLightPositions[index]);
-    lightingShader.setVec3(baseName + ".ambient", 1.0f, 0.773f, 0.561f);
-    lightingShader.setVec3(baseName + ".diffuse", 0.8f, 0.8f, 0.8f);
-    lightingShader.setVec3(baseName + ".specular", 1.0f, 1.0f, 1.0f);
-    lightingShader.setFloat(baseName + ".constant", 1.0f);
-    lightingShader.setFloat(baseName + ".linear", 0.22f);
-    lightingShader.setFloat(baseName + ".quadratic", 0.20f);
-    lightingShader.setBool("blinn", bilin);
-    lightingShader.setBool("gamma", gamma);
+    lightingShader.setVec3(baseName + ".position", pointLightPositions[index]); // Keep lamp position
+    lightingShader.setVec3(baseName + ".ambient", 0.3f, 0.24f, 0.14f); // Warm ambient light (low intensity)
+    lightingShader.setVec3(baseName + ".diffuse", 0.7f, 0.5f, 0.3f); // Warm diffuse light (higher than ambient)
+    lightingShader.setVec3(baseName + ".specular", 1.0f, 0.9f, 0.8f); // Slightly warm specular highlights
+    lightingShader.setFloat(baseName + ".constant", 1.0f); // Standard constant term
+    lightingShader.setFloat(baseName + ".linear", 0.18f); // Higher linear attenuation for small range
+    lightingShader.setFloat(baseName + ".quadratic", 0.12f); // Higher quadratic attenuation for rapid falloff
+    lightingShader.setBool("bilin", bilin); // Keep Blinn-Phong if applicable
+    lightingShader.setBool("gamma", gamma); // Apply gamma correction if enabled
 
     
 }
+
+void renderScene(GLFWwindow* window) {
+    // per-frame time logic
+    float currentFrame = static_cast<float>(glfwGetTime());
+    deltaTime = currentFrame - lastFrame;
+    lastFrame = currentFrame;
+    
+
+    // input
+    // -----
+    processInput(window);
+
+    // render
+    // ------
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // be sure to activate shader when setting uniforms/drawing objects
+    lightingShader.use();
+    lightingShader.setVec3("viewPos", camera.Position);
+    lightingShader.setFloat("material.shininess", 8.0f);
+
+    dayCycle(deltaTime, lightingShader);
+    
+    
+    for(int i = 0; i < pointLightCount; i++) {
+        createPointLight(i, lightingShader);
+    }
+
+    // view/projection transformations
+    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+    glm::mat4 view = camera.GetViewMatrix();
+    lightingShader.setMat4("projection", projection);
+    lightingShader.setMat4("view", view);
+
+    // world transformation
+    glm::mat4 model = glm::mat4(1.0f);
+    lightingShader.setMat4("model", model);
+    lightingShader.setInt("pointLightCount", pointLightCount);
+
+    /*/ bind diffuse map
+    glBindVertexArray(planeVAO);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, gamma ? floorTextureGammaCorrected : floorTexture);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    */
+    // render containers
+    
+
+    drawWorld(cubeVAO, &lightingShader);
+    lightCubeShader.use();
+    lightCubeShader.setMat4("projection", projection);
+    lightCubeShader.setMat4("view", view);
+
+        // we now draw as many light bulbs as we have point lights.
+        
+
+
+    // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
+    // -------------------------------------------------------------------------------
+    glfwSwapBuffers(window);
+    glfwPollEvents();
+        
+};
