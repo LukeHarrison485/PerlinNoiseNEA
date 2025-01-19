@@ -10,7 +10,6 @@
 #include <iostream>
 #include "shader.h"
 #include "camera.h"
-#include "cube.h"
 #include "perlin.h"
 #include "timeCycle.h"
 
@@ -23,36 +22,47 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 unsigned int loadTexture(char const * path);
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 void createPointLight(int index, Shader& lightingShader);
-void renderScene(GLFWwindow* window);
+void renderScene(GLFWwindow* window, Shader shader);
+void configureMatricesAndShaders();
+void initializeBuffers(unsigned int* VAO, unsigned int* instanceVBO, unsigned int* VBO);
+void updateInstanceData();
 
 Shader lightingShader;
-Shader lightCubeShader;
+Shader simpleDepthShader;
 
-unsigned int VBO, cubeVAO;
+unsigned int VBO, cubeVAO, instanceVBO;
 
-int seed = time(NULL);
+int seed;
 
 void generateWorldFromHeightmap(const char* heightmapPath, std::vector<cube*>& cubes, int MAX_HEIGHT, unsigned int* vao) {
-    createPerlinNoise(16, 64, 64, seed);
+    createPerlinNoise(32, 256, 256, seed);
     int width, height, nrChannels;
     unsigned char* heightmapData = stbi_load(heightmapPath, &width, &height, &nrChannels, 1); // Load as grayscale
     if (!heightmapData) {
         std::cout << "Failed to load heightmap" << std::endl;
         return;
     }
-
+    std::vector<cube*> temp;
     for (int z = 0; z < height; ++z) {
         for (int x = 0; x < width; ++x) {
             unsigned char pixelValue = heightmapData[z * width + x];
             float normalizedHeight = pixelValue / 255.0f; // Normalize [0, 1]
             int cubeHeight = static_cast<int>(normalizedHeight * MAX_HEIGHT);
-
+            
             // Create cubes stacked vertically
             for (int y = 0; y < cubeHeight; ++y) {
-                cubes.push_back(new cube(glm::vec3(x, y, z), DIRT, cubes, vao, &lightingShader));
+                if(y < 4) {
+                    temp.push_back(new cube(glm::vec3(x, y, z), STONE, &lightingShader, &cubeVAO, &VBO, cubes));
+                }
+                else {
+                    temp.push_back(new cube(glm::vec3(x, y, z), DIRT, &lightingShader, &cubeVAO, &VBO, cubes));
+                }
+                
             }
         }
     }
+    cubes = temp;
+    updateInstanceData();
 
     stbi_image_free(heightmapData);
 }
@@ -62,7 +72,7 @@ const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
 // camera
-Camera camera(glm::vec3(0.0f, 2.5f, 3.0f));
+Camera camera(glm::vec3(0.0f, 6.0f, 3.0f));
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 bool firstMouse = true;
@@ -121,68 +131,18 @@ int main()
         std::cout << "Failed to initialize GLAD" << std::endl;
         return -1;
     }
-    lightingShader.createShader("vertex.glsl", "fragment.glsl");
-    lightCubeShader.createShader("shaders/lighting.vs", "shaders/lighting.fs");
-    
+    lightingShader.createShader("lighting.vs", "lighting.fs");
+    simpleDepthShader.createShader("shaders/depth.vs", "shaders/depth.fs");
+
     const char* version = (const char*)glGetString(GL_VERSION);
     std::cout << "OpenGL Version: " << version << std::endl;
 
-
-    glEnable(GL_DEPTH_TEST);
     glEnable(GL_MULTISAMPLE);  
 
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     
-
-    unsigned int depthMapFBO;
-    glGenFramebuffers(1, &depthMapFBO);
-    unsigned int depthCubemap;
-    glGenTextures(1, &depthCubemap);
-    const unsigned int SHADOW_WIDTH = 1024, SHADOW_HEIGHT = 1024;
-    glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
-    for (unsigned int i = 0; i < 6; ++i)
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-
-    
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);  
-    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthCubemap, 0);
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);  
-
-    glGenVertexArrays(1, &cubeVAO);
-    glGenBuffers(1, &VBO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-    glBindVertexArray(cubeVAO);
-
-    // position attribute
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    // normal attribute
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-
-
-    // second, configure the light's VAO (VBO stays the same; the vertices are the same for the light object which is also a 3D cube)
-    unsigned int lightCubeVAO;
-    glGenVertexArrays(1, &lightCubeVAO);
-    glBindVertexArray(lightCubeVAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    // note that we update the lamp's position attribute's stride to reflect the updated buffer data
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+    initializeBuffers(&cubeVAO, &instanceVBO, &VBO);
 
     unsigned int floorTexture = loadTexture("wood.png");
     unsigned int floorTextureGammaCorrected = loadTexture("wood.png");
@@ -192,17 +152,27 @@ int main()
     lightingShader.setFloat("light.constant",  1.0f);
     lightingShader.setFloat("light.linear",    0.09f);
     lightingShader.setFloat("light.quadratic", 0.032f);	
-
+    seed = time(NULL);
+    glGenTextures(3, textures); // Generate texture IDs for 3 textures
     textures[DIRT] = loadTexture("dirt.png");
-    generateWorldFromHeightmap("perlin.bmp", cubes, 8, &cubeVAO);
+    textures[STONE] = loadTexture("stone.png");
+    textures[GRASS] = loadTexture("grass.png");
+    generateWorldFromHeightmap("perlin.bmp", cubes, 18, &cubeVAO);
     printf("Amount of blocks in the world: %d\n", cubes.size());
     
 
 
     // uncomment this call to draw in wireframe polygons.
     //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    
     glEnable(GL_MULTISAMPLE);
+    glEnable(GL_DEPTH_TEST);       // Enable depth testing
+    glDepthFunc(GL_LESS);
+    
+    glEnable(GL_CULL_FACE);        // Enable face culling
+    glCullFace(GL_BACK);           // Cull back faces
+    glFrontFace(GL_CW);           // Counter-clockwise vertices are front faces
+    
+
     
 
 
@@ -210,13 +180,41 @@ int main()
     // -----------
     while (!glfwWindowShouldClose(window))
     {
-        renderScene(window);
+        glClearColor(ambientLighting.x, ambientLighting.y, ambientLighting.z + 0.2f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        float currentFrame = static_cast<float>(glfwGetTime());
+        deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+        processInput(window);
+        /*
+        glm::mat4 lightProjection, lightView;
+        glm::mat4 lightSpaceMatrix;
+        float near_plane = 1.0f, far_plane = 7.5f;
+        lightProjection = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, near_plane, far_plane);
+        lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0, 1.0, 0.0));
+        lightSpaceMatrix = lightProjection * lightView;
+
+        simpleDepthShader.use();
+        simpleDepthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+        glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+            glClear(GL_DEPTH_BUFFER_BIT);
+            renderScene(window, simpleDepthShader);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // 2. then render scene as normal with shadow mapping (using depth map)
+        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+        */
+        camera.updateCameraPosition(deltaTime);
+        configureMatricesAndShaders();
+        renderScene(window, lightingShader);
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();   
     }
 
     // optional: de-allocate all resources once they've outlived their purpose:
     // ------------------------------------------------------------------------
     glDeleteVertexArrays(1, &cubeVAO);
-    glDeleteVertexArrays(1, &lightCubeVAO);
     glDeleteBuffers(1, &VBO);
 
     // glfw: terminate, clearing all previously allocated GLFW resources.
@@ -240,6 +238,13 @@ void processInput(GLFWwindow *window)
         camera.ProcessKeyboard(LEFT, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.ProcessKeyboard(RIGHT, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+        camera.Jump();
+    }
+    if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS) {
+        seed = time(NULL);
+        generateWorldFromHeightmap("perlin.bmp", cubes, 32, &cubeVAO);
+    }
 }
 
 // glfw: whenever the window size changed (by OS or user resize) this callback function executes
@@ -294,15 +299,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
                 bilin = true;
             }
         }
-    if (key == GLFW_KEY_G && action == GLFW_RELEASE) {
-            if(gamma) {
-                gamma = false;
-                printf("Gamma off!\n");
-            } 
-            else {
-                gamma = true;
-            }
-        }
+    
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
@@ -350,7 +347,6 @@ unsigned int loadTexture(char const * path)
     return textureID;
 }
 
-
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
     if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
@@ -385,66 +381,61 @@ void createPointLight(int index, Shader& lightingShader) {
     
 }
 
-void renderScene(GLFWwindow* window) {
-    // per-frame time logic
-    float currentFrame = static_cast<float>(glfwGetTime());
-    deltaTime = currentFrame - lastFrame;
-    lastFrame = currentFrame;
-    
+void configureMatricesAndShaders() {
 
-    // input
-    // -----
-    processInput(window);
-
-    // render
-    // ------
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // be sure to activate shader when setting uniforms/drawing objects
     lightingShader.use();
     lightingShader.setVec3("viewPos", camera.Position);
-    lightingShader.setFloat("material.shininess", 8.0f);
-
+    lightingShader.setFloat("material.shininess", 2.0f);
     dayCycle(deltaTime, lightingShader);
-    
-    
     for(int i = 0; i < pointLightCount; i++) {
         createPointLight(i, lightingShader);
     }
-
     // view/projection transformations
     glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
     glm::mat4 view = camera.GetViewMatrix();
     lightingShader.setMat4("projection", projection);
     lightingShader.setMat4("view", view);
-
-    // world transformation
-    glm::mat4 model = glm::mat4(1.0f);
-    lightingShader.setMat4("model", model);
     lightingShader.setInt("pointLightCount", pointLightCount);
+}
 
-    /*/ bind diffuse map
-    glBindVertexArray(planeVAO);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, gamma ? floorTextureGammaCorrected : floorTexture);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    */
-    // render containers
-    
-
-    drawWorld(cubeVAO, &lightingShader);
-    lightCubeShader.use();
-    lightCubeShader.setMat4("projection", projection);
-    lightCubeShader.setMat4("view", view);
-
-        // we now draw as many light bulbs as we have point lights.
-        
-
-
-    // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
-    // -------------------------------------------------------------------------------
-    glfwSwapBuffers(window);
-    glfwPollEvents();
-        
+void renderScene(GLFWwindow* window, Shader shader) {
+    glm::mat4 model = glm::mat4(1.0f);
+    shader.setMat4("model", model);
+    drawWorld(cubeVAO, &shader);
 };
+
+void initializeBuffers(unsigned int* VAO, unsigned int* instanceVBO, unsigned int* VBO) {
+        glGenVertexArrays(1, VAO);
+        glGenBuffers(1, VBO);
+        glGenBuffers(1, instanceVBO);
+
+        glBindVertexArray(*VAO);
+
+        // Set up vertex data (positions, normals, texture coords)
+        glBindBuffer(GL_ARRAY_BUFFER, *VBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+        // Vertex attributes
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0); // Position
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1); // Normal
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+        glEnableVertexAttribArray(2); // Texture coords
+
+        // Set up instance data
+        glBindBuffer(GL_ARRAY_BUFFER, *instanceVBO);
+        glBufferData(GL_ARRAY_BUFFER, instancePositions.size() * sizeof(glm::vec3), instancePositions.data(), GL_DYNAMIC_DRAW);
+
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+        glEnableVertexAttribArray(3); // Instance position
+        glVertexAttribDivisor(3, 1);  // Set attribute divisor for instancing
+
+        glBindVertexArray(0);
+}
+
+void updateInstanceData() {
+    // Update the instance VBO with new positions
+    glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+    glBufferData(GL_ARRAY_BUFFER, instancePositions.size() * sizeof(glm::vec3), instancePositions.data(), GL_DYNAMIC_DRAW);
+}

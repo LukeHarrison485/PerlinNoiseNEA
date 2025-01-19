@@ -11,7 +11,7 @@ void dayCycle(float deltaTime, Shader lightingShader) {
     timeElapsed += deltaTime;
 
     // Day cycle configuration
-    float dayLength = 60.0f; // Length of a full day in seconds
+    float dayLength = 100.0f; // Length of a full day in seconds
     float timeScale = 1.0f; // Speed multiplier for day/night cycle
     float currentTime = fmod(glfwGetTime() * timeScale, dayLength); // Loop time within the day
 
@@ -29,14 +29,12 @@ void dayCycle(float deltaTime, Shader lightingShader) {
     float rawTimeOfDay = sin(currentTime / dayLength * 2.0f * 3.14159f);
     float timeOfDay = (rawTimeOfDay + 1.0f) / 2.0f; // Normalize to [0, 1]
 
-    float nightBaseIntensity = 0.1f; // Minimum light at night
-    float dayIntensityScale = 0.75f;  // Maximum additional intensity during the day
+    float nightBaseIntensity = 0.05f; // Minimum light at night
+    float dayIntensityScale = 0.85f;  // Maximum additional intensity during the day
     float lightIntensity = nightBaseIntensity + timeOfDay * dayIntensityScale;
 
-    glm::vec3 ambientLighting = glm::vec3(lightIntensity, lightIntensity, lightIntensity);
+    ambientLighting = glm::vec3(lightIntensity, lightIntensity, lightIntensity);
 
-    // Set lighting parameters in the shader
-    printf("Angle: %f, Light Direction: (%f, %f, %f)\n", angle, lightDirection.x, lightDirection.y, lightDirection.z);
     lightingShader.setVec3("dirLight.direction", lightDirection);
     lightingShader.setVec3("dirLight.ambient", ambientLighting);
     lightingShader.setVec3("dirLight.diffuse", glm::vec3(lightIntensity * 0.5f));
