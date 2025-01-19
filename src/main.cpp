@@ -24,18 +24,18 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 void createPointLight(int index, Shader& lightingShader);
 void renderScene(GLFWwindow* window, Shader shader);
 void configureMatricesAndShaders();
-void initializeBuffers(unsigned int* VAO, unsigned int* instanceVBO, unsigned int* VBO);
+void initializeBuffers(unsigned int* VAO, unsigned int* instanceVBO, unsigned int* VBO, unsigned int* EBO);
 void updateInstanceData();
 
 Shader lightingShader;
 Shader simpleDepthShader;
 
-unsigned int VBO, cubeVAO, instanceVBO;
+unsigned int VBO, cubeVAO, instanceVBO, EBO;
 
 int seed;
 
 void generateWorldFromHeightmap(const char* heightmapPath, std::vector<cube*>& cubes, int MAX_HEIGHT, unsigned int* vao) {
-    createPerlinNoise(32, 256, 256, seed);
+    createPerlinNoise(64, 256, 256, seed);
     int width, height, nrChannels;
     unsigned char* heightmapData = stbi_load(heightmapPath, &width, &height, &nrChannels, 1); // Load as grayscale
     if (!heightmapData) {
@@ -142,7 +142,7 @@ int main()
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     
-    initializeBuffers(&cubeVAO, &instanceVBO, &VBO);
+    initializeBuffers(&cubeVAO, &instanceVBO, &VBO, &EBO);
 
     unsigned int floorTexture = loadTexture("wood.png");
     unsigned int floorTextureGammaCorrected = loadTexture("wood.png");
@@ -391,7 +391,7 @@ void configureMatricesAndShaders() {
         createPointLight(i, lightingShader);
     }
     // view/projection transformations
-    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 500.0f);
     glm::mat4 view = camera.GetViewMatrix();
     lightingShader.setMat4("projection", projection);
     lightingShader.setMat4("view", view);
@@ -404,35 +404,41 @@ void renderScene(GLFWwindow* window, Shader shader) {
     drawWorld(cubeVAO, &shader);
 };
 
-void initializeBuffers(unsigned int* VAO, unsigned int* instanceVBO, unsigned int* VBO) {
-        glGenVertexArrays(1, VAO);
-        glGenBuffers(1, VBO);
-        glGenBuffers(1, instanceVBO);
+void initializeBuffers(unsigned int* VAO, unsigned int* instanceVBO, unsigned int* VBO, unsigned int* EBO) {
+    glGenVertexArrays(1, VAO);
+    glGenBuffers(1, VBO);
+    glGenBuffers(1, instanceVBO);
+    glGenBuffers(1, EBO); // Generate the EBO
 
-        glBindVertexArray(*VAO);
+    glBindVertexArray(*VAO);
 
-        // Set up vertex data (positions, normals, texture coords)
-        glBindBuffer(GL_ARRAY_BUFFER, *VBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    // Set up vertex data (positions, normals, texture coords)
+    glBindBuffer(GL_ARRAY_BUFFER, *VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-        // Vertex attributes
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0); // Position
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1); // Normal
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-        glEnableVertexAttribArray(2); // Texture coords
+    // Vertex attributes
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0); // Position
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1); // Normal
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2); // Texture coords
 
-        // Set up instance data
-        glBindBuffer(GL_ARRAY_BUFFER, *instanceVBO);
-        glBufferData(GL_ARRAY_BUFFER, instancePositions.size() * sizeof(glm::vec3), instancePositions.data(), GL_DYNAMIC_DRAW);
+    // Set up instance data
+    glBindBuffer(GL_ARRAY_BUFFER, *instanceVBO);
+    glBufferData(GL_ARRAY_BUFFER, instancePositions.size() * sizeof(glm::vec3), instancePositions.data(), GL_DYNAMIC_DRAW);
 
-        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-        glEnableVertexAttribArray(3); // Instance position
-        glVertexAttribDivisor(3, 1);  // Set attribute divisor for instancing
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+    glEnableVertexAttribArray(3); // Instance position
+    glVertexAttribDivisor(3, 1);  // Set attribute divisor for instancing
 
-        glBindVertexArray(0);
+    /*
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, *EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+    */
+    glBindVertexArray(0);
 }
+
 
 void updateInstanceData() {
     // Update the instance VBO with new positions
